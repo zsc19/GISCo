@@ -235,49 +235,49 @@ class ModelManager(nn.Module):
                                                  self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
                                                  self.__args.dropout_rate) 
 
-        # intra-corpus label embedding is updated during training
-        # intent label embedding
-        self.__intent_embedding = nn.Parameter(torch.FloatTensor(self.__num_intent, self.__args.intent_embedding_dim))
-        nn.init.normal_(self.__intent_embedding.data)
-        # slot label embedding
-        self.__slot_embedding = nn.Parameter(torch.FloatTensor(self.__num_slot, self.__args.slot_embedding_dim))
-        nn.init.normal_(self.__slot_embedding.data)
-        
-        # intra-utterance attention for intent and slot label representation
-        self.__intent_attention = IntraUtteranceAttention(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
-                                               self.__args.self_attention_hidden_dim,
-                                               self.__num_intent,
-                                               self.__args.dropout_rate)
-        self.__slot_attention = IntraUtteranceAttention(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
-                                               self.__args.self_attention_hidden_dim,
-                                               self.__num_slot,
-                                               self.__args.dropout_rate)
+        # # intra-corpus label embedding is updated during training
+        # # intent label embedding
+        # self.__intent_embedding = nn.Parameter(torch.FloatTensor(self.__num_intent, self.__args.intent_embedding_dim))
+        # nn.init.normal_(self.__intent_embedding.data)
+        # # slot label embedding
+        # self.__slot_embedding = nn.Parameter(torch.FloatTensor(self.__num_slot, self.__args.slot_embedding_dim))
+        # nn.init.normal_(self.__slot_embedding.data)
+        #
+        # # intra-utterance attention for intent and slot label representation
+        # self.__intent_attention = IntraUtteranceAttention(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
+        #                                        self.__args.self_attention_hidden_dim,
+        #                                        self.__num_intent,
+        #                                        self.__args.dropout_rate)
+        # self.__slot_attention = IntraUtteranceAttention(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
+        #                                        self.__args.self_attention_hidden_dim,
+        #                                        self.__num_slot,
+        #                                        self.__args.dropout_rate)
+        #
+        # # intent-slot co-occurrence gcn
+        # self.graph_Adj = graph_adj.get_graph_adj(self.__args)
+        # if torch.cuda.is_available():
+        #     self.graph_Adj = self.graph_Adj.cuda()
+        # self.graph_Adj.requires_grad = False
+        # self.__graph_gcn = GcnNet(self.__args,
+        #                           self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
+        #                           self.__args.gcn_output_dim,
+        #                           self.__args.gcn_dropout_rate)
+        #
+        # # intent and slot embedding adaptively fuse with w1 and w2
+        # self.__intent_weight1 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
+        # self.__intent_weight2 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
+        # self.__slot_weight1 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
+        # self.__slot_weight2 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
+        #
+        # # extract intent and slot information from utterance using in slot decoder
+        # self.__intent_text_qkv = Attention(self.__args.dropout_rate)
+        # self.__slot_text_qkv = Attention(self.__args.dropout_rate)
+        # # information fuse block used in slot decoder
+        # self.__fuse_block = SlotDecoderBlock(self.__args, self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim)
 
-        # intent-slot co-occurrence gcn
-        self.graph_Adj = graph_adj.get_graph_adj(self.__args)
-        if torch.cuda.is_available():
-            self.graph_Adj = self.graph_Adj.cuda()
-        self.graph_Adj.requires_grad = False
-        self.__graph_gcn = GcnNet(self.__args,
-                                  self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim,
-                                  self.__args.gcn_output_dim,
-                                  self.__args.gcn_dropout_rate)
-
-        # intent and slot embedding adaptively fuse with w1 and w2
-        self.__intent_weight1 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
-        self.__intent_weight2 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
-        self.__slot_weight1 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
-        self.__slot_weight2 = nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, 1)
-        
-        # extract intent and slot information from utterance using in slot decoder
-        self.__intent_text_qkv = Attention(self.__args.dropout_rate)
-        self.__slot_text_qkv = Attention(self.__args.dropout_rate)
-        # information fuse block used in slot decoder
-        self.__fuse_block = SlotDecoderBlock(self.__args, self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim)
-
-        # intent decoder mlp
+        # intent decoder mlp改
         self.__intent_decoder = nn.Sequential(
-            nn.Linear(self.__num_intent, self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim),
+            nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim),
             nn.LeakyReLU(args.alpha),
             nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, self.__num_intent)
         )
@@ -289,8 +289,30 @@ class ModelManager(nn.Module):
             nn.LeakyReLU(args.alpha),
             nn.Linear(self.__args.encoder_hidden_dim + self.__args.self_attention_output_dim, self.__num_slot)
         )
-
-
+        """Encoder"""
+        self.__intent = nn.Linear(self.__num_intent, 384, bias=False)
+        self.__slot = nn.Linear(self.__num_slot, 384, bias=False)
+        """RAN"""
+        self.__self_attention = EnSelfAttention(
+            384,#self.__args.encoder_hidden_dim,
+            self.__args.self_attention_hidden_dim,
+            384,#self.__args.encoder_hidden_dim,
+            self.__args.dropout_rate
+        )
+        self.__attention = Attention(self.__args.dropout_rate)
+        # Define FFN
+        self.__r_ffn = nn.Sequential(
+            nn.Linear(384,384),
+            nn.Dropout(self.__args.slot_decoder_dropout_rate),
+            nn.LeakyReLU(args.alpha),
+            nn.Linear(384,384)
+        )
+        self.__h_ffn = nn.Sequential(
+            nn.Linear(384,384),
+            nn.Dropout(self.__args.slot_decoder_dropout_rate),
+            nn.LeakyReLU(args.alpha),
+            nn.Linear(384,384)
+        )
     def forward(self, text, seq_lens, n_predicts=None):
         word_tensor = self.__embedding(text)
 
@@ -307,59 +329,96 @@ class ModelManager(nn.Module):
         if self.__args.gpu:
             seq_lens_tensor = seq_lens_tensor.cuda()
 
-        # intent and slot label embedder
-        # intra-utterance
-        intent_attention_out = self.__intent_attention(text_hiddens_intent, seq_lens)
-        intent_attention_out = F.dropout(intent_attention_out, p=self.__args.dropout_rate, training=self.training)
-        slot_attention_out = self.__slot_attention(text_hiddens_slot, seq_lens)
-        slot_attention_out = F.dropout(slot_attention_out, p=self.__args.dropout_rate, training=self.training)
-        # intra-corpus
-        intent_embedding = torch.matmul(torch.matmul(self.__intent_embedding.unsqueeze(0).repeat(len(seq_lens), 1, 1), text_hiddens_intent.transpose(-1, -2)), text_hiddens_intent)
-        slot_embedding = torch.matmul(torch.matmul(self.__slot_embedding.unsqueeze(0).repeat(len(seq_lens), 1, 1), text_hiddens_slot.transpose(-1, -2)), text_hiddens_slot)
-        # adaptive fusion
-        intent_weight1 = torch.sigmoid(self.__intent_weight1(intent_embedding))
-        intent_weight2 = torch.sigmoid(self.__intent_weight2(intent_attention_out))
-        intent_weight1 = intent_weight1 / (intent_weight1 + intent_weight2)
-        intent_weight2 = 1 - intent_weight1
-        slot_weight1 = torch.sigmoid(self.__slot_weight1(slot_embedding))
-        slot_weight2 = torch.sigmoid(self.__slot_weight2(slot_attention_out))
-        slot_weight1 = slot_weight1 / (slot_weight1 + slot_weight2)
-        slot_weight2 = 1 - slot_weight1
-        intent_attention_out = intent_weight1 * intent_embedding + intent_weight2 * intent_attention_out
-        intent_attention_out = F.dropout(intent_attention_out, p=self.__args.dropout_rate, training=self.training)
-        slot_attention_out = slot_weight1 * slot_embedding + slot_weight2 * slot_attention_out
-        slot_attention_out = F.dropout(slot_attention_out, p=self.__args.dropout_rate, training=self.training)
-
-        # intent-slot co-occurrence gcn
-        graph_H = torch.cat([intent_attention_out, slot_attention_out], dim=1)
-        graph_Adj = self.graph_Adj.unsqueeze(0).repeat(len(seq_lens), 1, 1)
-        graph_H = self.__graph_gcn(graph_H, graph_Adj) 
-        # updated label representation through gcn
-        intent_label_H = graph_H[:, 0:self.__num_intent, :]
-        slot_label_H = graph_H[:, self.__num_intent:, :]
-
-        # similarity of intent and utterance  
-        text_fuse_intent_pred = torch.matmul(text_hiddens_intent, intent_label_H.transpose(-1, -2))
-
-        # information enhance and fuse block in slot decoder
-        text_fuse_intent = self.__intent_text_qkv(text_hiddens_intent, intent_label_H, intent_label_H)
-        text_fuse_intent = text_fuse_intent + text_hiddens_intent
-        text_fuse_slot = self.__slot_text_qkv(text_hiddens_slot, slot_label_H, slot_label_H)
-        text_fuse_slot = text_fuse_slot + text_hiddens_slot
-        text_fuse_slot = self.__fuse_block(text_fuse_intent, text_fuse_slot)
-
+        # # intent and slot label embedder
+        # # intra-utterance
+        # intent_attention_out = self.__intent_attention(text_hiddens_intent, seq_lens)
+        # intent_attention_out = F.dropout(intent_attention_out, p=self.__args.dropout_rate, training=self.training)
+        # slot_attention_out = self.__slot_attention(text_hiddens_slot, seq_lens)
+        # slot_attention_out = F.dropout(slot_attention_out, p=self.__args.dropout_rate, training=self.training)
+        # # intra-corpus
+        # intent_embedding = torch.matmul(torch.matmul(self.__intent_embedding.unsqueeze(0).repeat(len(seq_lens), 1, 1), text_hiddens_intent.transpose(-1, -2)), text_hiddens_intent)
+        # slot_embedding = torch.matmul(torch.matmul(self.__slot_embedding.unsqueeze(0).repeat(len(seq_lens), 1, 1), text_hiddens_slot.transpose(-1, -2)), text_hiddens_slot)
+        # # adaptive fusion
+        # intent_weight1 = torch.sigmoid(self.__intent_weight1(intent_embedding))
+        # intent_weight2 = torch.sigmoid(self.__intent_weight2(intent_attention_out))
+        # intent_weight1 = intent_weight1 / (intent_weight1 + intent_weight2)
+        # intent_weight2 = 1 - intent_weight1
+        # slot_weight1 = torch.sigmoid(self.__slot_weight1(slot_embedding))
+        # slot_weight2 = torch.sigmoid(self.__slot_weight2(slot_attention_out))
+        # slot_weight1 = slot_weight1 / (slot_weight1 + slot_weight2)
+        # slot_weight2 = 1 - slot_weight1
+        # intent_attention_out = intent_weight1 * intent_embedding + intent_weight2 * intent_attention_out
+        # intent_attention_out = F.dropout(intent_attention_out, p=self.__args.dropout_rate, training=self.training)
+        # slot_attention_out = slot_weight1 * slot_embedding + slot_weight2 * slot_attention_out
+        # slot_attention_out = F.dropout(slot_attention_out, p=self.__args.dropout_rate, training=self.training)
+        #
+        # # intent-slot co-occurrence gcn
+        # graph_H = torch.cat([intent_attention_out, slot_attention_out], dim=1)
+        # graph_Adj = self.graph_Adj.unsqueeze(0).repeat(len(seq_lens), 1, 1)
+        # graph_H = self.__graph_gcn(graph_H, graph_Adj)
+        # # updated label representation through gcn
+        # intent_label_H = graph_H[:, 0:self.__num_intent, :]
+        # slot_label_H = graph_H[:, self.__num_intent:, :]
+        #
+        # # similarity of intent and utterance
+        # text_fuse_intent_pred = torch.matmul(text_hiddens_intent, intent_label_H.transpose(-1, -2))
+        #
+        # # information enhance and fuse block in slot decoder
+        # text_fuse_intent = self.__intent_text_qkv(text_hiddens_intent, intent_label_H, intent_label_H)
+        # text_fuse_intent = text_fuse_intent + text_hiddens_intent
+        # text_fuse_slot = self.__slot_text_qkv(text_hiddens_slot, slot_label_H, slot_label_H)
+        # text_fuse_slot = text_fuse_slot + text_hiddens_slot
+        # text_fuse_slot = self.__fuse_block(text_fuse_intent, text_fuse_slot)
+        """"""
         #intent decoder mlp
-        pred_intent = self.__intent_decoder(text_fuse_intent_pred)
+        pred_intent = self.__intent_decoder(text_hiddens_intent)    # torch.Size([16, 30, 18])
         
         #slot decoder mlp
-        pred_slot = self.__slot_decoder(text_fuse_slot)
+        pred_slot = self.__slot_decoder(text_hiddens_slot)  # torch.Size([16, 30, 117])
+        """Encoder"""
+        I = F.softmax(pred_intent, dim=-1)
+        I = self.__intent(I)
+        S = F.softmax(pred_slot, dim=-1)
+        S = self.__slot(S)
+        """SR"""
+        H = text_encoder
+        """RAN"""
+        R = S + I   # torch.Size([16, 36, 256])
+        # R = torch.cat([pred_intent, pred_slot], dim=-1) # torch.Size([16, 30, 135])??
+        R_ = self.__self_attention(R, seq_lens)
+        R_att = F.normalize(R+R_, dim=-1)
 
+        S_ = self.__attention(S, R_att, I)
+        S = F.normalize(S+S_, dim=-1)
+        I_ = self.__attention(I, R, S)
+        I = F.normalize(I+I_, dim=-1)
+        R = S + I
+        R_ = self.__r_ffn(R)
+        R = F.normalize(R+R_, dim=-1)   # torch.Size([b, d, encoder_hidden_dim])
+        # print(R.shape)
+        """Decoder"""
+        H_ = torch.mean(H, dim=1) # [b, 384]
+        H_ = self.__h_ffn(H_)
+        # print(H.shape)
+        H_ = H_.unsqueeze(1)
+        # H_ = H.repeat(1,len(seq_lens),  1)
+        # print(H_.shape)
+        n = H + H_
+        """"""
+        pred_slot = H + R
+        pred_intent = H + R
+        # intent decoder mlp
+        pred_intent = self.__intent_decoder(pred_intent)  # torch.Size([16, 30, 18])
+
+        # slot decoder mlp
+        pred_slot = self.__slot_decoder(pred_slot)  # torch.Size([16, 30, 117])
+        """"""
         pred_slot_list = []
         for i in range(0, len(seq_lens)):
             pred_slot_list.append(pred_slot[i, 0:seq_lens[i], :])
         pred_slot = torch.cat(pred_slot_list, dim=0)
         pred_slot = F.log_softmax(pred_slot, dim=1)
-
+        # print(pred_slot.shape)
         if n_predicts is None:
             return pred_slot, pred_intent
         else:
