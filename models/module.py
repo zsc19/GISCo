@@ -7,7 +7,224 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.nn.utils.rnn import pad_packed_sequence
 from utils import graph_adj
 
+class PositionalEncoding(nn.Module):
+    """
+    compute sinusoid encoding.
+    """
+    def __init__(self, d_model, max_len, device):
+        """
+        constructor of sinusoid encoding class
 
+        :param d_model: dimension of model
+        :param max_len: max sequence length
+        :param device: hardware device setting
+        """
+        super(PositionalEncoding, self).__init__()
+
+        # same size with input matrix (for adding with input matrix)
+        self.encoding = torch.zeros(max_len, d_model, device=device)
+        self.encoding.requires_grad = False  # we don't need to compute gradient
+
+        pos = torch.arange(0, max_len, device=device)
+        pos = pos.float().unsqueeze(dim=1)
+        # 1D => 2D unsqueeze to represent word's position
+
+        _2i = torch.arange(0, d_model, step=2, device=device).float()
+        # 'i' means index of d_model (e.g. embedding size = 50, 'i' = [0,50])
+        # "step=2" means 'i' multiplied with two (same with 2 * i)
+
+        self.encoding[:, 0::2] = torch.sin(pos / (10000 ** (_2i / d_model)))
+        self.encoding[:, 1::2] = torch.cos(pos / (10000 ** (_2i / d_model)))
+        # compute positional encoding to consider positional information of words
+
+    def forward(self, x):
+        # self.encoding
+        # [max_len = 512, d_model = 512]
+
+        batch_size, seq_len = x.size()
+        # [batch_size = 128, seq_len = 30]
+
+        return self.encoding[:seq_len, :]
+        # [seq_len = 30, d_model = 512]
+        # it will add with tok_emb : [128, 30, 512]
+
+class MultiHeadAttention(nn.Module):
+
+    def __init__(self, d_model, n_head):
+        super(MultiHeadAttention, self).__init__()
+        self.n_head = n_head
+        self.attention = ScaleDotProductAttention()
+        self.w_q = nn.Linear(d_model, d_model)
+        self.w_k = nn.Linear(d_model, d_model)
+        self.w_v = nn.Linear(d_model, d_model)
+        self.w_concat = nn.Linear(d_model, d_model)
+
+    def forward(self, q, k, v, mask=None):
+        # 1. dot product with weight matrices
+        q, k, v = self.w_q(q), self.w_k(k), self.w_v(v)
+
+        # 2. split tensor by number of heads
+        q, k, v = self.split(q), self.split(k), self.split(v)
+
+        # 3. do scale dot product to compute similarity
+        out, attention = self.attention(q, k, v, mask=mask)
+
+        # 4. concat and pass to linear layer
+        out = self.concat(out)
+        out = self.w_concat(out)
+
+        # 5. visualize attention map
+        # TODO : we should implement visualization
+
+        return out
+
+    def split(self, tensor):
+        """
+        split tensor by number of head
+
+        :param tensor: [batch_size, length, d_model]
+        :return: [batch_size, head, length, d_tensor]
+        """
+        batch_size, length, d_model = tensor.size()
+
+        d_tensor = d_model // self.n_head
+        tensor = tensor.view(batch_size, length, self.n_head, d_tensor).transpose(1, 2)
+        # it is similar with group convolution (split by number of heads)
+
+        return tensor
+
+    def concat(self, tensor):
+        """
+        inverse function of self.split(tensor : torch.Tensor)
+
+        :param tensor: [batch_size, head, length, d_tensor]
+        :return: [batch_size, length, d_model]
+        """
+        batch_size, head, length, d_tensor = tensor.size()
+        d_model = head * d_tensor
+
+        tensor = tensor.transpose(1, 2).contiguous().view(batch_size, length, d_model)
+        return tensor
+
+class ScaleDotProductAttention(nn.Module):
+    """
+    compute scale dot product attention
+
+    Query : given sentence that we focused on (decoder)
+    Key : every sentence to check relationship with Qeury(encoder)
+    Value : every sentence same with Key (encoder)
+    """
+
+    def __init__(self):
+        super(ScaleDotProductAttention, self).__init__()
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, q, k, v, mask=None, e=1e-12):
+        # input is 4 dimension tensor
+        # [batch_size, head, length, d_tensor]
+        batch_size, head, length, d_tensor = k.size()
+
+        # 1. dot product Query with Key^T to compute similarity
+        k_t = k.transpose(2, 3)  # transpose
+        score = (q @ k_t) / math.sqrt(d_tensor)  # scaled dot product
+
+        # 2. apply masking (opt)
+        if mask is not None:
+            score = score.masked_fill(mask == 0, -10000)
+
+        # 3. pass them softmax to make [0, 1] range
+        score = self.softmax(score)
+
+        # 4. multiply with Value
+        v = score @ v
+
+        return v, score
+
+class LayerNorm(nn.Module):
+    def __init__(self, d_model, eps=1e-12):
+        super(LayerNorm, self).__init__()
+        self.gamma = nn.Parameter(torch.ones(d_model))
+        self.beta = nn.Parameter(torch.zeros(d_model))
+        self.eps = eps
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        var = x.var(-1, unbiased=False, keepdim=True)
+        # '-1' means last dimension.
+
+        out = (x - mean) / torch.sqrt(var + self.eps)
+        out = self.gamma * out + self.beta
+        return out
+
+class PositionwiseFeedForward(nn.Module):
+
+    def __init__(self, d_model, hidden, drop_prob=0.1):
+        super(PositionwiseFeedForward, self).__init__()
+        self.linear1 = nn.Linear(d_model, hidden)
+        self.linear2 = nn.Linear(hidden, d_model)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(p=drop_prob)
+
+    def forward(self, x):
+        x = self.linear1(x)
+        x = self.relu(x)
+        x = self.dropout(x)
+        x = self.linear2(x)
+        return x
+
+class EncoderLayer(nn.Module):
+
+    def __init__(self, d_model, ffn_hidden, n_head, drop_prob):
+        super(EncoderLayer, self).__init__()
+        self.attention = MultiHeadAttention(d_model=d_model, n_head=n_head)
+        self.norm1 = LayerNorm(d_model=d_model)
+        self.dropout1 = nn.Dropout(p=drop_prob)
+
+        self.ffn = PositionwiseFeedForward(d_model=d_model, hidden=ffn_hidden, drop_prob=drop_prob)
+        self.norm2 = LayerNorm(d_model=d_model)
+        self.dropout2 = nn.Dropout(p=drop_prob)
+
+    def forward(self, x, src_mask):
+        # 1. compute self attention
+        _x = x
+        x = self.attention(q=x, k=x, v=x, mask=src_mask)
+
+        # 2. add and norm
+        x = self.dropout1(x)
+        x = self.norm1(x + _x)
+
+        # 3. positionwise feed forward network
+        _x = x
+        x = self.ffn(x)
+
+        # 4. add and norm
+        x = self.dropout2(x)
+        x = self.norm2(x + _x)
+        return x
+
+class Encoder(nn.Module):
+
+    def __init__(self, enc_voc_size, max_len, d_model, ffn_hidden, n_head, n_layers, drop_prob, device):
+        super().__init__()
+        self.emb = TransformerEmbedding(d_model=d_model,
+                                        max_len=max_len,
+                                        vocab_size=enc_voc_size,
+                                        drop_prob=drop_prob,
+                                        device=device)
+
+        self.layers = nn.ModuleList([EncoderLayer(d_model=d_model,
+                                                  ffn_hidden=ffn_hidden,
+                                                  n_head=n_head,
+                                                  drop_prob=drop_prob)
+                                     for _ in range(n_layers)])
+
+    def forward(self, x, src_mask):
+        x = self.emb(x)
+
+        for layer in self.layers:
+            x = layer(x, src_mask)
+
+        return x
 class QKVAttention(nn.Module):
     
     def __init__(self, query_dim, key_dim, value_dim, hidden_dim, output_dim, dropout_rate):
@@ -213,7 +430,42 @@ class SlotDecoderBlock(nn.Module):
         slot_tensor_new = cat_tensor + slot_tensor
         return slot_tensor_new
 
+class RAN_layer(nn.Module):
+    def __init__(self, args):
+        super(RAN_layer, self).__init__()
+        self.__args = args
+        self.__attention_1 = Attention(self.__args.dropout_rate)
+        self.__attention_2 = Attention(self.__args.dropout_rate)
+        self.__norm_1 = nn.LayerNorm(384) # LayerNorm(d_model=384)
+        self.__norm_2 = nn.LayerNorm(384) # LayerNorm(d_model=384)
+        self.__norm_3 = nn.LayerNorm(384) # LayerNorm(d_model=384)
+        self.__r_ffn = nn.Sequential(
+            nn.Linear(384,384),
+            nn.Dropout(self.__args.slot_decoder_dropout_rate),
+            nn.LeakyReLU(args.alpha),
+            nn.Linear(384,384)
+        )
 
+    def forward(self, S, R, I):
+        S_ = self.__attention_1(S, R, I)
+        S = self.__norm_1(S + S_)
+        I_ = self.__attention_2(I, R, S)
+        I = self.__norm_2(I + I_)
+        R = S + I
+        R_ = self.__r_ffn(R)
+        R = self.__norm_3(R + R_)
+        return S, R, I
+
+class ResultAttentionNetwork(nn.Module):
+    def __init__(self, args):
+        super(ResultAttentionNetwork, self).__init__()
+        self.layers = nn.ModuleList([RAN_layer(args) for _ in range(3)])
+
+    def forward(self, S, R, I):
+        for layer in self.layers:
+            S, R, I = layer(S, R, I)
+
+        return S, R, I
 class ModelManager(nn.Module):
     def __init__(self, args, num_word, num_slot, num_intent):
         super(ModelManager, self).__init__()
@@ -299,6 +551,10 @@ class ModelManager(nn.Module):
             384,#self.__args.encoder_hidden_dim,
             self.__args.dropout_rate
         )
+        self.__norm_1 = nn.LayerNorm(384) # LayerNorm(d_model=384)   #LayerNormalization(d_model)
+        self.__RAN = ResultAttentionNetwork(args)
+        self.__norm_11 = nn.LayerNorm(384) # LayerNorm(d_model=384)
+
         self.__attention = Attention(self.__args.dropout_rate)
         # Define FFN
         self.__r_ffn = nn.Sequential(
@@ -386,27 +642,20 @@ class ModelManager(nn.Module):
         R = S + I   # torch.Size([16, 36, 256])
         # R = torch.cat([pred_intent, pred_slot], dim=-1) # torch.Size([16, 30, 135])??
         R_ = self.__self_attention(R, seq_lens)
-        R_att = F.normalize(R+R_, dim=-1)
-
-        S_ = self.__attention(S, R_att, I)
-        S = F.normalize(S+S_, dim=-1)
-        I_ = self.__attention(I, R, S)
-        I = F.normalize(I+I_, dim=-1)
-        R = S + I
-        R_ = self.__r_ffn(R)
-        R = F.normalize(R+R_, dim=-1)   # torch.Size([b, d, encoder_hidden_dim])
+        # R_att = F.normalize(R+R_, dim=-1)
+        R = self.__norm_1(R+R_)
+        """3 layers"""
+        S, R, I = self.__RAN(S, R, I)
         # print(R.shape)
         """Decoder"""
         H_ = torch.mean(H, dim=1) # [b, 384]
         H_ = self.__h_ffn(H_)
-        # print(H.shape)
-        H_ = H_.unsqueeze(1)
-        # H_ = H.repeat(1,len(seq_lens),  1)
-        # print(H_.shape)
-        n = H + H_
+        H_ = H_.unsqueeze(1).repeat(1,H.shape[1],1)
+        # H_rs = F.normalize(H + R + H_, dim=-1)
+        H_rs = self.__norm_11(H + R + H_)
         """"""
-        pred_slot = H + R
-        pred_intent = H + R
+        pred_slot = H_rs + S
+        pred_intent = H_rs + I
         # intent decoder mlp
         pred_intent = self.__intent_decoder(pred_intent)  # torch.Size([16, 30, 18])
 
